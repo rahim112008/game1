@@ -1,203 +1,297 @@
 import streamlit as st
-import pygame
-import math
-import random
-import numpy as np
-import time
+import streamlit.components.v1 as components
 
-# --- CONFIGURATION DE LA PAGE STREAMLIT ---
+# Configuration de la page Streamlit Cloud
 st.set_page_config(
     page_title="L'Odyssée des 7 Mondes",
     page_icon="🐉",
-    layout="centered"
+    layout="wide"
 )
 
-st.title("🎮 L'Odyssée Thématique des 7 Mondes")
-st.caption("Jeu de plateforme 2D rendu en temps réel via Pygame & Streamlit")
+# Style CSS pour habiller l'application
+st.markdown("""
+    <style>
+    .main-title { text-align: center; color: #FF4B4B; font-family: 'Helvetica Neue', sans-serif; }
+    .subtitle { text-align: center; color: #555; margin-bottom: 20px; }
+    </style>
+""", unsafe_allow_html=True)
 
-# Dimensions de rendu fixes
-TARGET_WIDTH = 1000
-TARGET_HEIGHT = 500
+st.markdown("<h1 class='main-title'>🎮 L'Odyssée Thématique des 7 Mondes</h1>", unsafe_allow_html=True)
+st.markdown("<p class='subtitle'>Jeu de plateforme 2D - Version Cloud</p>", unsafe_allow_html=True)
 
-# INITIALISATION DU MOTEUR GRAPHIQUE ET AUDIO
-if 'init' not in st.session_state:
-    pygame.init()
-    pygame.mixer.init(frequency=22050, size=-16, channels=1)
-    st.session_state.init = True
+# Barre latérale pour les contrôles
+with st.sidebar:
+    st.header("🕹️ Contrôles du Jeu")
+    st.markdown("""
+    * **Flèches GAUCHE / DROITE** : Se déplacer
+    * **Flèche HAUT / ESPACE** : Sauter (Double saut possible)
+    * **Touche J** : Tirer avec l'arme équipée
+    * **Touche B** : Ouvrir / Fermer le Magasin d'armes
+    * **Touche R** : Redémarrer la partie
+    * **Touche P** : Pause
+    """)
+    st.write("---")
+    st.header("🛒 Le Magasin")
+    st.markdown("Appuyez sur **B** en jeu puis utilisez les touches **1 à 5** pour changer d'arme !")
 
-# --- SYNTHÈSE AUDIO ---
-def generate_sound(freq, duration, type='sine'):
-    sample_rate = 22050
-    n_samples = int(sample_rate * duration)
-    t = np.linspace(0, duration, n_samples, False)
-    if type == 'sine':
-        data = np.sin(2 * np.pi * freq * t)
-    elif type == 'square':
-        data = np.sign(np.sin(2 * np.pi * freq * t))
-    else:
-        data = np.random.uniform(-1, 1, n_samples)
-    
-    fade = int(n_samples * 0.1)
-    if fade > 0:
-        data[:fade] *= np.linspace(0, 1, fade)
-        data[-fade:] *= np.linspace(1, 0, fade)
-    return pygame.sndarray.make_sound((data * 32767).astype(np.int16))
+# Moteur de jeu injecté (HTML5 Canvas + JS) pour une fluidité parfaite à 60 FPS sur le Web
+game_html_code = """
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <style>
+        body { margin: 0; padding: 0; background-color: #000; overflow: hidden; font-family: monospace; }
+        canvas { display: block; margin: 0 auto; background: #fff; box-shadow: 0 0 20px rgba(255,255,255,0.2); }
+    </style>
+</head>
+<body>
 
-SOUNDS = {
-    'jump': generate_sound(400, 0.1, 'sine'),
-    'shoot': generate_sound(600, 0.08, 'square'),
-    'coin': generate_sound(900, 0.15, 'sine'),
-    'hit': generate_sound(150, 0.12, 'noise')
+<canvas id="gameCanvas" width="1000" height="500"></canvas>
+
+<script>
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+
+// --- AUDIO SYNTHÉTIQUE ---
+const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+function playSound(type) {
+    if(!audioCtx) return;
+    const osc = audioCtx.createOscillator();
+    const gain = audioCtx.createGain();
+    osc.connect(gain); gain.connect(audioCtx.destination);
+    if (type === 'jump') {
+        osc.frequency.setValueAtTime(400, audioCtx.currentTime);
+        osc.frequency.exponentialRampToValueAtTime(800, audioCtx.currentTime + 0.1);
+        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.1);
+    } else if (type === 'shoot') {
+        osc.type = 'square'; osc.frequency.setValueAtTime(600, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.1, audioCtx.currentTime);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.08);
+    } else if (type === 'coin') {
+        osc.frequency.setValueAtTime(880, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.2, audioCtx.currentTime);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.15);
+    } else if (type === 'hit') {
+        osc.type = 'sawtooth'; osc.frequency.setValueAtTime(120, audioCtx.currentTime);
+        gain.gain.setValueAtTime(0.3, audioCtx.currentTime);
+        osc.start(); osc.stop(audioCtx.currentTime + 0.12);
+    }
 }
 
-# --- THÈMES DES 7 NIVEAUX ---
-LEVEL_THEMES = {
-    1: {"name": "Japon 🇯🇵", "bg": (255, 220, 230), "ground": (220, 160, 180), "char_outfit": (255, 105, 180), "char_hair": (255, 182, 193), "enemy": "Wolf", "shoots": False, "enemy_color": (128, 128, 128), "shape": "heart", "p_color": (255, 50, 50)},
-    2: {"name": "Algérie 🇩🇿", "bg": (244, 164, 96), "ground": (210, 105, 30), "char_outfit": (34, 139, 34), "char_hair": (139, 69, 19), "enemy": "Fennec", "shoots": False, "enemy_color": (245, 222, 179), "shape": "fire", "p_color": (255, 69, 0)},
-    3: {"name": "Égypte 🇪🇬", "bg": (230, 190, 138), "ground": (180, 140, 90), "char_outfit": (212, 175, 55), "char_hair": (30, 30, 30), "enemy": "Jackal", "shoots": False, "enemy_color": (70, 70, 70), "shape": "crescent", "p_color": (240, 230, 140)},
-    4: {"name": "Rome 🇮🇹", "bg": (210, 200, 190), "ground": (140, 130, 120), "char_outfit": (178, 34, 34), "char_hair": (100, 60, 40), "enemy": "Wolf", "shoots": True, "enemy_color": (100, 100, 100), "shape": "spear", "p_color": (192, 192, 192)},
-    5: {"name": "Angleterre 🇬🇧", "bg": (112, 128, 144), "ground": (70, 80, 90), "char_outfit": (173, 216, 230), "char_hair": (244, 164, 96), "enemy": "NPC", "shoots": False, "enemy_color": (255, 228, 196), "shape": "umbrella", "p_color": (0, 0, 139)},
-    6: {"name": "Monde Glacial ❄️", "bg": (224, 255, 255), "ground": (175, 238, 238), "char_outfit": (255, 255, 255), "char_hair": (200, 230, 255), "enemy": "Bear", "shoots": True, "enemy_color": (240, 248, 255), "shape": "ice", "p_color": (0, 191, 255), "ice": True},
-    7: {"name": "Samouraï 🐉", "bg": (245, 235, 215), "ground": (139, 69, 19), "char_outfit": (101, 67, 33), "char_hair": (20, 20, 20), "enemy": "Boss", "shoots": False, "enemy_color": (0,0,0), "shape": "katana", "p_color": (138, 43, 226), "boss": True}
+// --- THÈMES ---
+const LEVEL_THEMES = {
+    1: { name: "Japon 🇯🇵", bg: "#FFE6EE", ground: "#DC143C", outfit: "#FF69B4", hair: "#FFB6C1", enemyType: "WolfEnemy", shoots: false, enemyColor: "#808080", shape: "heart", pColor: "#FF3232" },
+    2: { name: "Algérie 🇩🇿", bg: "#F4A460", ground: "#D2691E", outfit: "#228B22", hair: "#8B4513", enemyType: "FennecEnemy", shoots: false, enemyColor: "#F5DEB3", shape: "fire", pColor: "#FF4500" },
+    3: { name: "Égypte 🇪🇬", bg: "#E6BE8A", ground: "#B48C5A", outfit: "#D4AF37", hair: "#1E1E1E", enemyType: "JackalEnemy", shoots: false, enemyColor: "#464646", shape: "crescent", pColor: "#F0E68C" },
+    4: { name: "Rome Antique 🇮🇹", bg: "#D2C8BE", ground: "#8C8278", outfit: "#B22222", hair: "#643C28", enemyType: "WolfEnemy", shoots: true, enemyColor: "#646464", shape: "spear", pColor: "#C0C0C0" },
+    5: { name: "Époque Victorienne 🇬🇧", bg: "#708090", ground: "#46505A", outfit: "#ADD8E6", hair: "#F4A460", enemyType: "NPC", shoots: false, enemyColor: "#FFE4C4", shape: "umbrella", pColor: "#00008B" },
+    6: { name: "Monde Glacial ❄️", bg: "#E0FFFF", ground: "#AFEEEE", outfit: "#FFFFFF", hair: "#C8E6FF", enemyType: "BearEnemy", shoots: true, enemyColor: "#F0F8FF", shape: "ice", pColor: "#00BFFF", ice: true },
+    7: { name: "Samouraï / Japon médiéval 🐉", bg: "#F5EBD7", ground: "#8B4513", outfit: "#654321", hair: "#141414", enemyType: "None", shoots: false, enemyColor: "#000", shape: "katana", pColor: "#8A43E2", hasBoss: true }
+};
+
+const WEAPON_SHOP = {
+    "Base": { power: 1, cost: 0, color: "#C8C8C8", shape: "default" },
+    "Feu": { power: 2, cost: 50, color: "#FF4500", shape: "fire" },
+    "Glace": { power: 3, cost: 100, color: "#00BFFF", shape: "ice" },
+    "Foudre": { power: 4, cost: 200, color: "#FFFF00", shape: "lightning" },
+    "Légendaire": { power: 8, cost: 500, color: "#FFD700", shape: "legendary" }
+};
+
+let currentLevel = 1, score = 0, coins = 10, lives = 3, comboMultiplier = 1.0, comboTimer = 0;
+let currentWeapon = "Base", unlockedWeapons = ["Base"];
+let shopOpen = false, gamePaused = false, gameOver = false, victory = false, animFrame = 0;
+
+let player = { x: 100, y: 300, vx: 0, vy: 0, width: 32, height: 48, grounded: false, doubleJumpAvailable: true, invincibleTimer: 0, speedTimer: 0, shieldTimer: 0, facingRight: true };
+let platforms = [], enemies = [], coinsList = [], powerups = [], projectiles = [], boss = null, keys = {};
+
+function setupLevel(lvl) {
+    let config = LEVEL_THEMES[lvl];
+    player.x = 100; player.y = 300; player.vx = 0; player.vy = 0;
+    projectiles = [];
+    platforms = [
+        {x: 0, y: 450, w: 4000, h: 50}, {x: 400, y: 330, w: 150, h: 20}, {x: 700, y: 250, w: 200, h: 20},
+        {x: 1100, y: 340, w: 150, h: 20}, {x: 1500, y: 230, w: 250, h: 20}, {x: 1900, y: 310, w: 180, h: 20},
+        {x: 2300, y: 220, w: 200, h: 20}, {x: 2800, y: 330, w: 220, h: 20}, {x: 3300, y: 250, w: 150, h: 20}
+    ];
+    coinsList = [];
+    for(let i=10; i<360; i+=25) { coinsList.push({x: i*10, y: 410, w: 16, h: 16}); }
+    platforms.slice(1).forEach(p => { coinsList.push({x: p.x + p.w/2, y: p.y - 30, w: 16, h: 16}); });
+
+    enemies = []; boss = null;
+    if(!config.hasBoss) {
+        if(config.enemyType !== "None") {
+            for(let i=1; i<=5; i++) { enemies.push({x: 600*i, y: 410, w: 40, h: 40, vx: -1.5, type: config.enemyType, shoots: config.shoots, color: config.enemyColor, cooldown: Math.random()*100 + 50}); }
+        }
+    } else { boss = { x: 3600, y: 200, w: 120, h: 120, hp: 8, cooldown: 0, pulse: 0 }; }
+
+    powerups = [
+        {x: 800, y: 210, w: 20, h: 20, type: "invincibility", collected: false},
+        {x: 1600, y: 190, w: 20, h: 20, type: "speed", collected: false},
+        {x: 2900, y: 290, w: 20, h: 20, type: "shield", collected: false}
+    ];
 }
 
-WEAPON_SHOP = {
-    "Base": {"power": 1, "cost": 0, "color": (200, 200, 200)},
-    "Feu": {"power": 2, "cost": 50, "color": (255, 69, 0)},
-    "Glace": {"power": 3, "cost": 100, "color": (0, 191, 255)},
-    "Foudre": {"power": 4, "cost": 200, "color": (255, 255, 0)},
-    "Légendaire": {"power": 8, "cost": 500, "color": (255, 215, 0)}
-}
+window.addEventListener('keydown', e => {
+    keys[e.code] = true;
+    if(e.code === 'KeyR') { currentLevel = 1; score = 0; coins = 0; lives = 3; currentWeapon = "Base"; unlockedWeapons = ["Base"]; gameOver = false; victory = false; setupLevel(currentLevel); }
+    if(e.code === 'KeyP') gamePaused = !gamePaused;
+    if(e.code === 'KeyB' && !gameOver && !victory) shopOpen = !shopOpen;
+    if((e.code === 'Space' || e.code === 'ArrowUp') && !gamePaused && !shopOpen && !gameOver) {
+        if(player.grounded) { player.vy = -11; player.grounded = false; playSound('jump'); }
+        else if(player.doubleJumpAvailable) { player.vy = -10; player.doubleJumpAvailable = false; playSound('jump'); }
+    }
+    if(e.code === 'KeyJ' && !gamePaused && !shopOpen && !gameOver) {
+        let config = LEVEL_THEMES[currentLevel];
+        let p_vx = player.facingRight ? 7 : -7;
+        let p_pow = WEAPON_SHOP[currentWeapon].power;
+        let p_color = WEAPON_SHOP[currentWeapon].color;
+        let p_shape = currentWeapon !== "Base" ? WEAPON_SHOP[currentWeapon].shape : config.shape;
+        projectiles.push({x: player.x + (player.facingRight?24:-4), y: player.y + 16, w: 12, h: 12, vx: p_vx, color: p_color, power: p_pow, shape: p_shape, side: "player"});
+        playSound('shoot');
+    }
+    if(shopOpen) {
+        let sel = {"Digit1":"Base","Digit2":"Feu","Digit3":"Glace","Digit4":"Foudre","Digit5":"Légendaire"}[e.code];
+        if(sel) {
+            let info = WEAPON_SHOP[sel];
+            if(unlockedWeapons.includes(sel)) { currentWeapon = sel; }
+            else if(coins >= info.cost) { coins -= info.cost; unlockedWeapons.push(sel); currentWeapon = sel; }
+        }
+    }
+});
+window.addEventListener('keyup', e => { keys[e.code] = false; });
 
-# --- ÉTATS PERSISTANTS DANS STREAMLIT ---
-if 'game_state' not in st.session_state:
-    st.session_state.game_state = {
-        "level": 1, "score": 0, "coins": 10, "lives": 3, "combo": 1.0,
-        "px": 100, "py": 300, "pvx": 0, "pvy": 0, "grounded": False, "double_jump": True,
-        "weapon": "Base", "unlocked": ["Base"], "enemies": [], "boss_hp": 8, "boss_y": 200, "boss_dir": 1
+function update() {
+    if(gamePaused || shopOpen || gameOver || victory) return;
+    animFrame++;
+    let config = LEVEL_THEMES[currentLevel];
+    let isIce = config.ice || false;
+    let friction = isIce ? 0.95 : 0.8;
+    let accel = isIce ? 0.4 : 0.8;
+
+    if(keys['ArrowLeft']) { player.vx -= accel; player.facingRight = false; }
+    else if(keys['ArrowRight']) { player.vx += accel; player.facingRight = true; }
+    else { player.vx *= friction; }
+
+    let maxSpeed = player.speedTimer > 0 ? 8 : 5;
+    if(player.vx > maxSpeed) player.vx = maxSpeed;
+    if(player.vx < -maxSpeed) player.vx = -maxSpeed;
+
+    player.vy += 0.5; if(player.vy > 12) player.vy = 12;
+    player.x += player.vx; if(player.x < 0) player.x = 0;
+    player.y += player.vy; player.grounded = false;
+
+    platforms.forEach(p => {
+        if(player.x < p.x + p.w && player.x + player.width > p.x && player.y < p.y + p.h && player.y + player.height > p.y) {
+            if(player.vy > 0 && player.y + player.height - player.vy <= p.y) { player.y = p.y - player.height; player.vy = 0; player.grounded = true; player.doubleJumpAvailable = true; }
+        }
+    });
+
+    if(player.y > 550) { player.x = 100; player.y = 300; lives--; playSound('hit'); if(lives<=0) gameOver=true; }
+    if(player.invincibleTimer > 0) player.invincibleTimer--;
+    if(player.speedTimer > 0) player.speedTimer--;
+    if(player.shieldTimer > 0) player.shieldTimer--;
+    if(comboTimer > 0) { comboTimer--; if(comboTimer<=0) comboMultiplier = 1.0; }
+
+    if(boss) {
+        boss.pulse += 0.05; boss.y = 150 + Math.sin(boss.pulse) * 80; boss.cooldown--;
+        if(boss.cooldown <= 0) { boss.cooldown = 80; projectiles.push({x: boss.x, y: boss.y + 40, w: 12, h: 12, vx: -6, color: "#FF3200", power: 2, shape: "default", side: "hostile"}); }
+        if(player.x < boss.x + boss.w && player.x + player.width > boss.x && player.y < boss.y + boss.h && player.y + player.height > boss.y) {
+            if(player.invincibleTimer === 0) { lives--; player.invincibleTimer = 60; player.x = 100; if(lives<=0) gameOver=true; }
+        }
     }
 
-gs = st.session_state.game_state
+    enemies.forEach((e, idx) => {
+        e.x += e.vx; if(e.x < 0 || e.x > 3900) e.vx *= -1;
+        if(e.shoots) { e.cooldown--; if(e.cooldown <= 0) { e.cooldown = 120; projectiles.push({x: e.x, y: e.y+10, w: 12, h: 12, vx: -4, color: "#FF0000", power: 1, shape: "default", side: "hostile"}); } }
+        if(player.x < e.x + e.w && player.x + player.width > e.x && player.y < e.y + e.h && player.y + player.height > e.y) {
+            if(config.enemyType === "NPC") { enemies.splice(idx, 1); score += 50 * comboMultiplier; playSound('coin'); }
+            else if(player.invincibleTimer === 0) {
+                if(player.shieldTimer > 0) { player.shieldTimer = 0; player.invincibleTimer = 30; enemies.splice(idx, 1); }
+                else { lives--; player.invincibleTimer = 60; player.x = 100; if(lives<=0) gameOver=true; }
+            }
+        }
+    });
 
-# --- INTERFACE DE CONTRÔLE DANS STREAMLIT ---
-col1, col2, col3, col4 = st.columns(4)
-with col1:
-    if st.button("⬅️ Gauche"):
-        gs["pvx"] = -8; gs["px"] = max(0, gs["px"] - 15)
-with col2:
-    if st.button("🚀 Sauter"):
-        if gs["grounded"]:
-            gs["pvy"] = -12; gs["grounded"] = False; SOUNDS['jump'].play()
-        elif gs["double_jump"]:
-            gs["pvy"] = -10; gs["double_jump"] = False; SOUNDS['jump'].play()
-with col3:
-    if st.button("➡️ Droite"):
-        gs["pvx"] = 8; gs["px"] = min(3900, gs["px"] + 15)
-with col4:
-    if st.button("🔥 Tirer (J)"):
-        SOUNDS['shoot'].play()
-        # Logique de tir simplifiée : élimine l'ennemi le plus proche devant
-        config = LEVEL_THEMES[gs["level"]]
-        power = WEAPON_SHOP[gs["weapon"]]["power"]
-        if config.get("boss"):
-            gs["boss_hp"] -= power
-            if gs["boss_hp"] <= 0: st.balloons()
-        elif gs["enemies"]:
-            gs["enemies"].pop(0)
-            gs["score"] += int(100 * gs["combo"])
-            gs["combo"] = min(2.0, gs["combo"] + 0.2)
+    projectiles.forEach((p, pIdx) => {
+        p.x += p.vx; if(p.x < 0 || p.x > 4000) { projectiles.splice(pIdx,1); return; }
+        if(p.side === "player") {
+            enemies.forEach((e, eIdx) => {
+                if(p.x < e.x + e.w && p.x + p.w > e.x && p.y < e.y + e.h && p.y + p.h > e.y && config.enemyType !== "NPC") {
+                    enemies.splice(eIdx, 1); projectiles.splice(pIdx, 1);
+                    comboMultiplier = Math.min(2.0, comboMultiplier + 0.2); comboTimer = 120; score += 100 * comboMultiplier; playSound('hit');
+                }
+            });
+            if(boss && p.x < boss.x + boss.w && p.x + p.w > boss.x && p.y < boss.y + boss.h && p.y + p.h > boss.y) {
+                boss.hp -= p.power; projectiles.splice(pIdx, 1); playSound('hit'); if(boss.hp <= 0) victory = true;
+            }
+        } else {
+            if(p.x < player.x + player.width && p.x + p.w > player.x && p.y < player.y + player.height && p.y + p.h > player.y) {
+                projectiles.splice(pIdx, 1);
+                if(player.invincibleTimer === 0) { if(player.shieldTimer > 0) { player.shieldTimer = 0; player.invincibleTimer = 30; } else { lives--; player.invincibleTimer = 60; player.x = 100; if(lives<=0) gameOver=true; } }
+            }
+        }
+    });
 
-# --- BOUTIQUE INTEGRÉE STREAMLIT ---
-st.sidebar.header("🛒 Magasin d'Armes")
-for name, data in WEAPON_SHOP.items():
-    if name in gs["unlocked"]:
-        if st.sidebar.button(f"Équiper {name} (Puissance {data['power']}) [Possédé]", key=name):
-            gs["weapon"] = name
-    else:
-        if st.sidebar.button(f"Acheter {name} - {data['cost']} pièces", key=name):
-            if gs["coins"] >= data["cost"]:
-                gs["coins"] -= data["cost"]
-                gs["unlocked"].append(name)
-                gs["weapon"] = name
+    coinsList.forEach((c, idx) => {
+        if(player.x < c.x + c.w && player.x + player.width > c.x && player.y < c.y + c.h && player.y + player.height > c.y) { coinsList.splice(idx, 1); coins++; score += 100 * comboMultiplier; playSound('coin'); }
+    });
 
-if st.sidebar.button("🔄 Réinitialiser le Jeu"):
-    st.session_state.game_state = {
-        "level": 1, "score": 0, "coins": 0, "lives": 3, "combo": 1.0,
-        "px": 100, "py": 300, "pvx": 0, "pvy": 0, "grounded": False, "double_jump": True,
-        "weapon": "Base", "unlocked": ["Base"], "enemies": [], "boss_hp": 8, "boss_y": 200, "boss_dir": 1
+    powerups.forEach(pu => {
+        if(!pu.collected && player.x < pu.x + pu.w && player.x + player.width > pu.x && player.y < pu.y + pu.h && player.y + player.height > pu.y) {
+            pu.collected = true;
+            if(pu.type === "invincibility") player.invincibleTimer = 300;
+            if(pu.type === "speed") player.speedTimer = 300;
+            if(pu.type === "shield") player.shieldTimer = 400;
+        }
+    });
+
+    if(!config.hasBoss && player.x > 3850) { if(currentLevel < 7) { currentLevel++; lives++; setupLevel(currentLevel); } else { victory = true; } }
+}
+
+function draw() {
+    let config = LEVEL_THEMES[currentLevel];
+    ctx.fillStyle = config.bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
+    let offsetX = Math.min(Math.max(player.x - 250, 0), 3000);
+
+    ctx.fillStyle = config.ground; platforms.forEach(p => { ctx.fillRect(p.x - offsetX, p.y, p.w, p.h); });
+    ctx.fillStyle = "#FFD700"; coinsList.forEach(c => { ctx.beginPath(); ctx.arc(c.x - offsetX + 8, c.y + 8, 8, 0, Math.PI*2); ctx.fill(); });
+    powerups.forEach(pu => { if(!pu.collected) { ctx.fillStyle = pu.type === "invincibility" ? "#FF0000" : pu.type === "speed" ? "#00FF00" : "#0000FF"; ctx.fillRect(pu.x - offsetX, pu.y, pu.w, pu.h); } });
+    enemies.forEach(e => { ctx.fillStyle = e.color; ctx.fillRect(e.x - offsetX, e.y, e.w, e.h); });
+    if(boss) { ctx.fillStyle = "#C80000"; ctx.fillRect(boss.x - offsetX, boss.y, boss.w, boss.h); ctx.fillStyle = "#FFFF00"; ctx.fillRect(boss.x - offsetX + 20, boss.y + 20, 20, 20); }
+    projectiles.forEach(p => { ctx.fillStyle = p.color; ctx.fillRect(p.x - offsetX, p.y, p.w, p.h); });
+
+    if(!config.hasBoss) { ctx.strokeStyle = "#9400D3"; ctx.lineWidth = 4; ctx.beginPath(); ctx.ellipse(3850 - offsetX + 20, 400, 20, 50, 0, 0, Math.PI*2); ctx.stroke(); }
+
+    if(!(player.invincibleTimer > 0 && Math.floor(player.invincibleTimer/4)%2===0)) {
+        ctx.fillStyle = config.hair; ctx.fillRect(player.x - offsetX + (player.facingRight?-2:10), player.y - 4, 24, 20);
+        ctx.fillStyle = config.outfit; ctx.fillRect(player.x - offsetX, player.y + 14, player.width, 34);
+        ctx.fillStyle = "#FFDAB9"; ctx.fillRect(player.x - offsetX + 4, player.y, 24, 16);
+        ctx.fillStyle = "#000000"; ctx.fillRect(player.x - offsetX + (player.facingRight?18:8), player.y + 4, 4, 4);
     }
-    st.rerun()
+    if(player.shieldTimer > 0) { ctx.strokeStyle = "#00BFFF"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(player.x - offsetX + 16, player.y + 24, 30, 0, Math.PI*2); ctx.stroke(); }
 
-# --- BOUCLE ET PHYSIQUE DU JEU ---
-config = LEVEL_THEMES[gs["level"]]
+    ctx.fillStyle = "#000000"; ctx.font = "bold 16px Courier";
+    ctx.fillText(`SCORE: ${score} | VIES: ${lives} | PIÈCES: ${coins} | COMBO: x${comboMultiplier.toFixed(1)} | MONDE: ${config.name}`, 15, 25);
 
-# Initialisation des ennemis du niveau si la liste est vide
-if not gs["enemies"] and not config.get("boss"):
-    gs["enemies"] = [{"x": 600 * i, "y": 410, "dir": -1} for i in range(1, 5)]
+    if(shopOpen) {
+        ctx.fillStyle = "rgba(50,50,50,0.9)"; ctx.fillRect(200, 80, 600, 340); ctx.fillStyle = "#FFFFFF"; ctx.font = "bold 20px Courier"; ctx.fillText("--- MAGASIN D'ARMES (Touches 1 à 5) ---", 240, 110);
+        let y = 160; Object.keys(WEAPON_SHOP).forEach((name, i) => {
+            let data = WEAPON_SHOP[name]; let status = currentWeapon === name ? "[ÉQUIPÉE]" : (unlockedWeapons.includes(name) ? "[POSSÉDÉE]" : `Coût: ${data.cost} p.`);
+            ctx.fillStyle = currentWeapon === name ? "#00FF00" : "#FFFFFF"; ctx.fillText(`${i+1}. Arme ${name} (P.${data.power}) - ${status}`, 250, y); y += 35;
+        });
+    }
+    if(gameOver) { ctx.fillStyle = "rgba(0,0,0,0.8)"; ctx.fillRect(250, 180, 500, 140); ctx.fillStyle = "#FF0000"; ctx.font = "bold 32px Courier"; ctx.fillText("GAME OVER", 410, 230); ctx.fillStyle = "#FFFFFF"; ctx.font = "16px Courier"; ctx.fillText("Appuyez sur 'R' pour recommencer", 340, 280); }
+    if(victory) { ctx.fillStyle = "rgba(205,133,63,0.9)"; ctx.fillRect(250, 150, 500, 180); ctx.fillStyle = "#FFD700"; ctx.font = "bold 26px Courier"; ctx.fillText("VICTOIRE LÉGENDAIRE !", 330, 190); ctx.fillStyle = "#FFFFFF"; ctx.font = "18px Courier"; ctx.fillText(`Score Final: ${score}`, 415, 235); ctx.fillText("Appuyez sur 'R' pour rejouer", 355, 280); }
+}
 
-# Gravité et mouvements basiques
-gs["pvy"] += 0.8
-gs["py"] += gs["pvy"]
-gs["pvx"] *= 0.8
+setupLevel(currentLevel);
+function loop() { update(); draw(); requestAnimationFrame(loop); }
+loop();
+</script>
+</body>
+</html>
+"""
 
-# Collision Sol fixe
-if gs["py"] >= 402:
-    gs["py"] = 402
-    gs["pvy"] = 0
-    gs["grounded"] = True
-    gs["double_jump"] = True
-
-# Gestion du Boss volant
-if config.get("boss"):
-    gs["boss_y"] += 3 * gs["boss_dir"]
-    if gs["boss_y"] <= 100 or gs["boss_y"] >= 300:
-        gs["boss_dir"] *= -1
-
-# Avancement au niveau suivant si le joueur atteint le bout de la carte (x > 1500 pour simplifier sur Streamlit)
-if gs["px"] >= 1500 and not config.get("boss"):
-    if gs["level"] < 7:
-        gs["level"] += 1
-        gs["px"] = 100
-        gs["enemies"] = []
-        gs["lives"] += 1
-        st.toast(f"Bienvenue au Niveau {gs['level']} !", icon="🌟")
-    else:
-        if gs["boss_hp"] <= 0:
-            st.success("Félicitations ! Vous avez terrassé le Dragon !")
-
-# --- DESSIN DU JEU VIA SURFACE PYGAME ---
-surface = pygame.Surface((TARGET_WIDTH, TARGET_HEIGHT))
-surface.fill(config["bg"])
-
-# Dessin du Sol
-pygame.draw.rect(surface, config["ground"], (0, 450, TARGET_WIDTH, 50))
-
-# Dessin des Ennemis classiques
-for e in gs["enemies"]:
-    pygame.draw.rect(surface, config["enemy_color"], (e["x"] - gs["px"] + 200, e["y"], 40, 40))
-    pygame.draw.rect(surface, (0, 0, 0), (e["x"] - gs["px"] + 210, e["y"] + 10, 6, 6))
-
-# Dessin du Boss Dragon
-if config.get("boss") and gs["boss_hp"] > 0:
-    pygame.draw.rect(surface, (200, 0, 0), (600, gs["boss_y"], 120, 120))
-    pygame.draw.rect(surface, (255, 255, 0), (620, gs["boss_y"] + 20, 20, 20))
-    # Barre de vie du boss
-    pygame.draw.rect(surface, (0, 0, 0), (600, gs["boss_y"] - 20, 120, 10))
-    pygame.draw.rect(surface, (0, 255, 0), (600, gs["boss_y"] - 20, int(120 * (gs["boss_hp"] / 8)), 10))
-
-# Dessin de l'Héroïne (Pixel art en formes colorées selon le niveau)
-px_screen = 200  # Position visuelle fixe (Défilement de caméra simulé)
-pygame.draw.rect(surface, config["char_hair"], (px_screen - 2, gs["py"] - 4, 24, 20)) # Cheveux
-pygame.draw.rect(surface, config["char_outfit"], (px_screen, gs["py"] + 14, 32, 34)) # Tenue/Robe
-pygame.draw.rect(surface, (255, 218, 185), (px_screen + 4, gs["py"], 24, 16))        # Visage
-pygame.draw.rect(surface, (0, 0, 0), (px_screen + 16, gs["py"] + 4, 4, 4))           # Yeux
-
-# --- CONVERSION ET AFFICHAGE DANS STREAMLIT ---
-img_array = pygame.surfarray.array3d(surface)
-img_array = np.transpose(img_array, (1, 0, 2)) # Ajustement des axes pour l'affichage image
-
-st.image(img_array, use_column_width=True)
-
-# Affichage des Statistiques sous le canvas
-st.write(f"**Monde actuel :** {config['name']} | **Score :** {gs['score']} | **Pièces :** {gs['coins']} | **Vies :** {gs['lives']} | **Combo :** x{gs['combo']:.1f}")
-st.write(f"**Arme équipée :** {gs['weapon']} (Puissance {WEAPON_SHOP[gs['weapon']]['power']})")
+components.html(game_html_code, height=520, scrolling=False)
