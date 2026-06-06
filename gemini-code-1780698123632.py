@@ -1,293 +1,498 @@
 import streamlit as st
-import streamlit.components.v1 as components
 
-# --- CONFIGURATION DE LA PAGE CLOUD ---
-st.set_page_config(
-    page_title="L'Odyssée des 7 Mondes",
-    page_icon="🐉",
-    layout="wide"
-)
-
-st.markdown("""
-    <style>
-    .main-title { text-align: center; color: #FF4B4B; font-family: 'Helvetica Neue', sans-serif; font-weight: bold; }
-    .subtitle { text-align: center; color: #666; margin-bottom: 20px; font-size: 1.1rem; }
-    </style>
-""", unsafe_allow_html=True)
-
-st.markdown("<h1 class='main-title'>🎮 L'Odyssée Thématique des 7 Mondes</h1>", unsafe_allow_html=True)
-st.markdown("<p class='subtitle'>Édition Web Haute Performance (60 FPS)</p>", unsafe_allow_html=True)
-
-# --- PANNEAU DE CONTRÔLES (SIDEBAR) ---
-with st.sidebar:
-    st.header("🕹️ Commandes du Joueur")
-    st.markdown("""
-    * **Flèches GAUCHE / DROITE** : Se déplacer
-    * **Flèche HAUT / ESPACE** : Sauter & Double Saut
-    * **Touche J** : Tirer avec l'arme active
-    * **Touche B** : Ouvrir / Fermer le Magasin d'armes
-    * **Touche R** : Réinitialiser la partie
-    * **Touche P** : Mettre en pause
-    """)
-    st.write("---")
-    st.header("🛒 Raccourcis Magasin")
-    st.markdown("Une fois le magasin ouvert (**B**), utilisez les touches **1 à 5** de votre clavier pour équiper ou acheter une arme !")
-
-# --- MOTEUR DE JEU COMPATIBLE CLOUD (HTML5/CANVAS) ---
-game_html_code = """
+GAME_WITH_POWERUPS = """
 <!DOCTYPE html>
 <html lang="fr">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+    <title>Racer's Legacy - Turbo Edition</title>
     <style>
-        body { margin: 0; padding: 0; background-color: #0f0f14; overflow: hidden; font-family: 'Courier New', monospace; }
-        canvas { display: block; margin: 10px auto; background: #fff; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border-radius: 4px; }
+        * { user-select: none; touch-action: pan-y pinch-zoom; }
+        body {
+            background: radial-gradient(ellipse at 30% 40%, #021010, #000000);
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+            font-family: 'Courier New', 'VT323', monospace;
+            margin: 0;
+            padding: 20px;
+        }
+        .game-container {
+            background: #0f211c;
+            border-radius: 36px;
+            padding: 15px 20px 20px;
+            box-shadow: 0 20px 30px rgba(0,0,0,0.6), inset 0 1px 3px rgba(255,255,200,0.2);
+        }
+        canvas {
+            display: block;
+            margin: 0 auto;
+            border-radius: 20px;
+            box-shadow: 0 0 0 4px #f7d98c, 0 12px 28px black;
+            cursor: none;
+        }
+        .info-panel {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: space-between;
+            background: #03100cee;
+            backdrop-filter: blur(4px);
+            margin: 12px 0 8px;
+            padding: 8px 15px;
+            border-radius: 60px;
+            gap: 10px;
+        }
+        .info-panel div {
+            background: #1e3d33;
+            padding: 4px 14px;
+            border-radius: 32px;
+            font-weight: bold;
+            color: #ffe0a3;
+        }
+        .powerup-status {
+            background: #2a2418;
+            font-size: 0.8rem;
+        }
+        button {
+            background: #d68b30;
+            border: none;
+            font-family: monospace;
+            font-weight: bold;
+            font-size: 1rem;
+            padding: 6px 20px;
+            border-radius: 60px;
+            cursor: pointer;
+            color: #1f2f1a;
+            transition: 0.05s linear;
+            box-shadow: 0 3px 0 #7a3e0e;
+        }
+        button:active { transform: translateY(2px); box-shadow: 0 1px 0 #7a3e0e; }
+        .controls {
+            text-align: center;
+            margin-top: 12px;
+            color: #c0e0c0;
+            font-size: 0.75rem;
+        }
     </style>
 </head>
 <body>
-
-<canvas id="gameCanvas" width="1000" height="500"></canvas>
+<div>
+    <div class="game-container">
+        <canvas id="gameCanvas" width="550" height="650"></canvas>
+        <div class="info-panel">
+            <div>🏆 NIV <span id="levelVal">1</span>/10</div>
+            <div>🎯 OBJ <span id="objVal">0</span></div>
+            <div>🏁 SCORE <span id="scoreVal">0</span></div>
+            <div class="powerup-status">⚡ <span id="powerupLabel">Aucun</span></div>
+        </div>
+        <div style="display: flex; justify-content: center; gap: 20px;">
+            <button id="resetStoryBtn">🔄 Reprendre l'histoire</button>
+        </div>
+        <div class="controls">
+            🚗 ← →  ou A/D – Attrape les POWER-UPS (★) pour des bonus !
+        </div>
+    </div>
+</div>
 
 <script>
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
-
-// --- SYNTHÉTISEUR AUDIO WEB ---
-const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-function playSound(type) {
-    if(!audioCtx) return;
-    const osc = audioCtx.createOscillator();
-    const gain = audioCtx.createGain();
-    osc.connect(gain); gain.connect(audioCtx.destination);
-    
-    if (type === 'jump') {
-        osc.frequency.setValueAtTime(350, audioCtx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(700, audioCtx.currentTime + 0.12);
-        gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
-        osc.start(); osc.stop(audioCtx.currentTime + 0.12);
-    } else if (type === 'shoot') {
-        osc.type = 'square'; osc.frequency.setValueAtTime(550, audioCtx.currentTime);
-        gain.gain.setValueAtTime(0.08, audioCtx.currentTime);
-        osc.start(); osc.stop(audioCtx.currentTime + 0.07);
-    } else if (type === 'coin') {
-        osc.frequency.setValueAtTime(950, audioCtx.currentTime);
-        gain.gain.setValueAtTime(0.15, audioCtx.currentTime);
-        osc.start(); osc.stop(audioCtx.currentTime + 0.15);
-    } else if (type === 'hit') {
-        osc.type = 'sawtooth'; osc.frequency.setValueAtTime(140, audioCtx.currentTime);
-        gain.gain.setValueAtTime(0.25, audioCtx.currentTime);
-        osc.start(); osc.stop(audioCtx.currentTime + 0.1);
-    }
-}
-
-// --- CONFIGURATION CONFIGURATION DES 7 NIVEAUX ---
-const LEVEL_THEMES = {
-    1: { name: "Japon 🇯🇵", bg: "#FFE6EE", ground: "#DC143C", outfit: "#FF69B4", hair: "#FFB6C1", enemyType: "Wolf", shoots: false, enemyColor: "#808080", shape: "heart", pColor: "#FF3232" },
-    2: { name: "Algérie 🇩🇿", bg: "#F4A460", ground: "#D2691E", outfit: "#228B22", hair: "#8B4513", enemyType: "Fennec", shoots: false, enemyColor: "#F5DEB3", shape: "fire", pColor: "#FF4500" },
-    3: { name: "Égypte 🇪🇬", bg: "#E6BE8A", ground: "#B48C5A", outfit: "#D4AF37", hair: "#1E1E1E", enemyType: "Jackal", shoots: false, enemyColor: "#464646", shape: "crescent", pColor: "#F0E68C" },
-    4: { name: "Rome 🇮🇹", bg: "#D2C8BE", ground: "#8C8278", outfit: "#B22222", hair: "#643C28", enemyType: "Wolf", shoots: true, enemyColor: "#646464", shape: "spear", pColor: "#C0C0C0" },
-    5: { name: "Angleterre 🇬🇧", bg: "#708090", ground: "#46505A", outfit: "#ADD8E6", hair: "#F4A460", enemyType: "NPC", shoots: false, enemyColor: "#FFE4C4", shape: "umbrella", pColor: "#00008B" },
-    6: { name: "Monde Glacial ❄️", bg: "#E0FFFF", ground: "#AFEEEE", outfit: "#FFFFFF", hair: "#C8E6FF", enemyType: "Bear", shoots: true, enemyColor: "#F0F8FF", shape: "ice", pColor: "#00BFFF", ice: true },
-    7: { name: "Samouraï 🐉", bg: "#F5EBD7", ground: "#8B4513", outfit: "#654321", hair: "#141414", enemyType: "None", shoots: false, enemyColor: "#000", shape: "katana", pColor: "#8A43E2", hasBoss: true }
-};
-
-const WEAPON_SHOP = {
-    "Base": { power: 1, cost: 0, color: "#C8C8C8" },
-    "Feu": { power: 2, cost: 50, color: "#FF4500" },
-    "Glace": { power: 3, cost: 100, color: "#00BFFF" },
-    "Foudre": { power: 4, cost: 200, color: "#FFFF00" },
-    "Légendaire": { power: 8, cost: 500, color: "#FFD700" }
-};
-
-// Variables d'état
-let currentLevel = 1, score = 0, coins = 10, lives = 3, comboMultiplier = 1.0, comboTimer = 0;
-let currentWeapon = "Base", unlockedWeapons = ["Base"];
-let shopOpen = false, gamePaused = false, gameOver = false, victory = false;
-
-let player = { x: 100, y: 300, vx: 0, vy: 0, width: 32, height: 48, grounded: false, doubleJumpAvailable: true, invincibleTimer: 0, speedTimer: 0, shieldTimer: 0, facingRight: true };
-let platforms = [], enemies = [], coinsList = [], powerups = [], projectiles = [], boss = null, keys = {};
-
-function setupLevel(lvl) {
-    let config = LEVEL_THEMES[lvl];
-    player.x = 100; player.y = 300; player.vx = 0; player.vy = 0;
-    projectiles = [];
-    
-    platforms = [
-        {x: 0, y: 450, w: 4000, h: 50}, {x: 400, y: 330, w: 150, h: 20}, {x: 700, y: 250, w: 200, h: 20},
-        {x: 1100, y: 340, w: 150, h: 20}, {x: 1500, y: 230, w: 250, h: 20}, {x: 1900, y: 310, w: 180, h: 20}
-    ];
-    
-    coinsList = [];
-    for(let i=12; i<350; i+=30) { coinsList.push({x: i*10, y: 410, w: 16, h: 16}); }
-    
-    enemies = []; boss = null;
-    if(!config.hasBoss) {
-        if(config.enemyType !== "None") {
-            for(let i=1; i<=4; i++) { 
-                enemies.push({x: 700*i, y: 410, w: 40, h: 40, vx: -1.8, type: config.enemyType, shoots: config.shoots, color: config.enemyColor, cooldown: Math.random()*80 + 40}); 
+    (function(){
+        // ---------- CONFIGURATION CANVAS ----------
+        const canvas = document.getElementById('gameCanvas');
+        const ctx = canvas.getContext('2d');
+        const LANE_COUNT = 3;
+        const LANE_WIDTH = canvas.width / LANE_COUNT;
+        const CAR_W = 46, CAR_H = 74;
+        const LANE_POS = [LANE_WIDTH/2, LANE_WIDTH + LANE_WIDTH/2, LANE_WIDTH*2 + LANE_WIDTH/2];
+        
+        // ---------- JOUEUR ----------
+        let player = {
+            x: LANE_POS[1] - CAR_W/2,
+            y: canvas.height - 100,
+            w: CAR_W, h: CAR_H,
+            lane: 1,
+            invincible: false,
+            invincibleEnd: 0
+        };
+        
+        // ---------- ENNEMIS ----------
+        let enemies = [];
+        const ENEMY_W = 48, ENEMY_H = 76;
+        
+        // ---------- POWER-UPS ----------
+        let powerups = [];
+        const POWER_SIZE = 28;
+        
+        // ---------- ÉTAT JEU & HISTOIRE ----------
+        let currentLevel = 1;
+        let levelObjectives = {1:10,2:18,3:28,4:40,5:55,6:70,7:85,8:100,9:120,10:150};
+        let currentScore = 0;
+        let gameRunning = true;
+        let victory = false;
+        
+        // Variables power-up actifs (effets)
+        let activeBoost = false;
+        let boostEnd = 0;
+        let activeSlow = false;
+        let slowEnd = 0;
+        let activeShield = false;
+        let shieldEnd = 0;
+        
+        // Difficulté dynamique
+        let baseEnemySpeed = 4.6;
+        let spawnDelayFrames = 36;
+        let frameCounter = 0;
+        
+        // Dialogues
+        const dialogues = {
+            1:"Niveau 1 : Échauffement. 10 dépassements !",
+            2:"Niveau 2 : Les rookies débarquent. 18 évitements.",
+            3:"Niveau 3 : Trafic dense. 28 dépassements.",
+            4:"Niveau 4 : Pluie imminente. 40 voitures à éviter.",
+            5:"Niveau 5 : Demi-finale. 55 dépassements !",
+            6:"Niveau 6 : Zone dangereuse. 70 adversaires.",
+            7:"Niveau 7 : Course nocturne. Objectif 85.",
+            8:"Niveau 8 : Poursuite policière. 100 dépassements.",
+            9:"Niveau 9 : Avant la finale. 120 adversaires !",
+            10:"NIVEAU FINAL : Affronte Victor et ses sbires. 150 dépassements !"
+        };
+        
+        function updateUI() {
+            document.getElementById('levelVal').innerText = currentLevel;
+            let remaining = levelObjectives[currentLevel] - currentScore;
+            if(remaining<0) remaining=0;
+            document.getElementById('objVal').innerText = remaining;
+            document.getElementById('scoreVal').innerText = currentScore;
+            let powerText = "";
+            if(activeShield) powerText = "🛡️ BOUCLIER";
+            else if(activeBoost) powerText = "⚡ BOOST";
+            else if(activeSlow) powerText = "🐢 SLOW";
+            else powerText = "—";
+            document.getElementById('powerupLabel').innerText = powerText;
+            let msgDiv = document.getElementById('storyMsg');
+            if(msgDiv) {
+                if(victory) msgDiv.innerText = "🏆 VICTOIRE ! Tu as remporté la légende ! 🏆";
+                else if(!gameRunning) msgDiv.innerText = "💥 CRASH... Relance l'histoire.";
+                else msgDiv.innerText = dialogues[currentLevel] || "Continue !";
             }
         }
-    } else { boss = { x: 3500, y: 200, w: 120, h: 120, hp: 8, cooldown: 0, pulse: 0 }; }
-
-    powerups = [
-        {x: 800, y: 210, w: 20, h: 20, type: "invincibility", collected: false},
-        {x: 1600, y: 190, w: 20, h: 20, type: "shield", collected: false}
-    ];
-}
-
-window.addEventListener('keydown', e => {
-    keys[e.code] = true;
-    if(e.code === 'KeyR') { currentLevel = 1; score = 0; coins = 10; lives = 3; currentWeapon = "Base"; unlockedWeapons = ["Base"]; gameOver = false; victory = false; setupLevel(currentLevel); }
-    if(e.code === 'KeyP') gamePaused = !gamePaused;
-    if(e.code === 'KeyB' && !gameOver && !victory) shopOpen = !shopOpen;
-    if((e.code === 'Space' || e.code === 'ArrowUp') && !gamePaused && !shopOpen && !gameOver) {
-        if(player.grounded) { player.vy = -11.5; player.grounded = false; playSound('jump'); }
-        else if(player.doubleJumpAvailable) { player.vy = -10; player.doubleJumpAvailable = false; playSound('jump'); }
-    }
-    if(e.code === 'KeyJ' && !gamePaused && !shopOpen && !gameOver) {
-        let p_vx = player.facingRight ? 8 : -8;
-        let p_pow = WEAPON_SHOP[currentWeapon].power;
-        let p_color = WEAPON_SHOP[currentWeapon].color;
-        projectiles.push({x: player.x + (player.facingRight?24:-4), y: player.y + 16, w: 12, h: 12, vx: p_vx, color: p_color, power: p_pow, side: "player"});
-        playSound('shoot');
-    }
-    if(shopOpen) {
-        let sel = {"Digit1":"Base","Digit2":"Feu","Digit3":"Glace","Digit4":"Foudre","Digit5":"Légendaire"}[e.code];
-        if(sel) {
-            let info = WEAPON_SHOP[sel];
-            if(unlockedWeapons.includes(sel)) { currentWeapon = sel; }
-            else if(coins >= info.cost) { coins -= info.cost; unlockedWeapons.push(sel); currentWeapon = sel; }
-        }
-    }
-});
-window.addEventListener('keyup', e => { keys[e.code] = false; });
-
-function update() {
-    if(gamePaused || shopOpen || gameOver || victory) return;
-    let config = LEVEL_THEMES[currentLevel];
-    let friction = config.ice ? 0.96 : 0.82;
-    let accel = config.ice ? 0.35 : 0.75;
-
-    if(keys['ArrowLeft']) { player.vx -= accel; player.facingRight = false; }
-    else if(keys['ArrowRight']) { player.vx += accel; player.facingRight = true; }
-    else { player.vx *= friction; }
-
-    let maxSpeed = 5.5;
-    if(player.vx > maxSpeed) player.vx = maxSpeed;
-    if(player.vx < -maxSpeed) player.vx = -maxSpeed;
-
-    player.vy += 0.52; 
-    player.x += player.vx; if(player.x < 0) player.x = 0;
-    player.y += player.vy; player.grounded = false;
-
-    platforms.forEach(p => {
-        if(player.x < p.x + p.w && player.x + player.width > p.x && player.y < p.y + p.h && player.y + player.height > p.y) {
-            if(player.vy > 0 && player.y + player.height - player.vy <= p.y) { player.y = p.y - player.height; player.vy = 0; player.grounded = true; player.doubleJumpAvailable = true; }
-        }
-    });
-
-    if(player.y > 520) { player.x = 100; player.y = 300; lives--; playSound('hit'); if(lives<=0) gameOver=true; }
-    if(player.invincibleTimer > 0) player.invincibleTimer--;
-    if(player.shieldTimer > 0) player.shieldTimer--;
-    if(comboTimer > 0) { comboTimer--; if(comboTimer<=0) comboMultiplier = 1.0; }
-
-    if(boss) {
-        boss.pulse += 0.04; boss.y = 160 + Math.sin(boss.pulse) * 70; boss.cooldown--;
-        if(boss.cooldown <= 0) { boss.cooldown = 90; projectiles.push({x: boss.x, y: boss.y + 40, w: 12, h: 12, vx: -5.5, color: "#FF3200", side: "hostile"}); }
-        if(player.x < boss.x + boss.w && player.x + player.width > boss.x && player.y < boss.y + boss.h && player.y + player.height > boss.y) {
-            if(player.invincibleTimer === 0) { lives--; player.invincibleTimer = 60; player.x = 100; if(lives<=0) gameOver=true; }
-        }
-    }
-
-    enemies.forEach((e, idx) => {
-        e.x += e.vx; if(e.x < 0 || e.x > 3900) e.vx *= -1;
-        if(e.shoots) { e.cooldown--; if(e.cooldown <= 0) { e.cooldown = 130; projectiles.push({x: e.x, y: e.y+10, w: 12, h: 12, vx: -4.5, color: "#FF0000", side: "hostile"}); } }
-        if(player.x < e.x + e.w && player.x + player.width > e.x && player.y < e.y + e.h && player.y + player.height > e.y) {
-            if(config.enemyType === "NPC") { enemies.splice(idx, 1); score += 50 * comboMultiplier; playSound('coin'); }
-            else if(player.invincibleTimer === 0) {
-                if(player.shieldTimer > 0) { player.shieldTimer = 0; player.invincibleTimer = 30; enemies.splice(idx, 1); }
-                else { lives--; player.invincibleTimer = 60; player.x = 100; if(lives<=0) gameOver=true; }
-            }
-        }
-    });
-
-    projectiles.forEach((p, pIdx) => {
-        p.x += p.vx; if(p.x < 0 || p.x > 4000) { projectiles.splice(pIdx,1); return; }
-        if(p.side === "player") {
-            enemies.forEach((e, eIdx) => {
-                if(p.x < e.x + e.w && p.x + p.w > e.x && p.y < e.y + e.h && p.y + p.h > e.y && config.enemyType !== "NPC") {
-                    enemies.splice(eIdx, 1); projectiles.splice(pIdx, 1);
-                    comboMultiplier = Math.min(2.0, comboMultiplier + 0.2); comboTimer = 120; score += 100 * comboMultiplier; playSound('hit');
-                }
-            });
-            if(boss && p.x < boss.x + boss.w && p.x + p.w > boss.x && p.y < boss.y + boss.h && p.y + p.h > boss.y) {
-                boss.hp -= p.power; projectiles.splice(pIdx, 1); playSound('hit'); if(boss.hp <= 0) victory = true;
-            }
-        } else {
-            if(p.x < player.x + player.width && p.x + p.w > player.x && p.y < player.y + player.height && p.y + p.h > player.y) {
-                projectiles.splice(pIdx, 1);
-                if(player.invincibleTimer === 0) { if(player.shieldTimer > 0) { player.shieldTimer = 0; player.invincibleTimer = 30; } else { lives--; player.invincibleTimer = 60; player.x = 100; if(lives<=0) gameOver=true; } }
-            }
-        }
-    });
-
-    coinsList.forEach((c, idx) => {
-        if(player.x < c.x + c.w && player.x + player.width > c.x && player.y < c.y + c.h && player.y + player.height > c.y) { coinsList.splice(idx, 1); coins++; score += 100 * comboMultiplier; playSound('coin'); }
-    });
-
-    powerups.forEach(pu => {
-        if(!pu.collected && player.x < pu.x + pu.w && player.x + player.width > pu.x && player.y < pu.y + pu.h && player.y + player.height > pu.y) {
-            pu.collected = true;
-            if(pu.type === "invincibility") player.invincibleTimer = 300;
-            if(pu.type === "shield") player.shieldTimer = 400;
-        }
-    });
-
-    if(!config.hasBoss && player.x > 3850) { if(currentLevel < 7) { currentLevel++; lives++; setupLevel(currentLevel); } else { victory = true; } }
-}
-
-function draw() {
-    let config = LEVEL_THEMES[currentLevel];
-    ctx.fillStyle = config.bg; ctx.fillRect(0, 0, canvas.width, canvas.height);
-    let offsetX = Math.min(Math.max(player.x - 250, 0), 3000);
-
-    ctx.fillStyle = config.ground; platforms.forEach(p => { ctx.fillRect(p.x - offsetX, p.y, p.w, p.h); });
-    ctx.fillStyle = "#FFD700"; coinsList.forEach(c => { ctx.beginPath(); ctx.arc(c.x - offsetX + 8, c.y + 8, 8, 0, Math.PI*2); ctx.fill(); });
-    powerups.forEach(pu => { if(!pu.collected) { ctx.fillStyle = pu.type === "invincibility" ? "#FF0000" : "#0000FF"; ctx.fillRect(pu.x - offsetX, pu.y, pu.w, pu.h); } });
-    enemies.forEach(e => { ctx.fillStyle = e.color; ctx.fillRect(e.x - offsetX, e.y, e.w, e.h); });
-    if(boss) { ctx.fillStyle = "#C80000"; ctx.fillRect(boss.x - offsetX, boss.y, boss.w, boss.h); ctx.fillStyle = "#FFFF00"; ctx.fillRect(boss.x - offsetX + 20, boss.y + 20, 20, 20); }
-    projectiles.forEach(p => { ctx.fillStyle = p.color; ctx.fillRect(p.x - offsetX, p.y, p.w, p.h); });
-
-    if(!config.hasBoss) { ctx.strokeStyle = "#9400D3"; ctx.lineWidth = 4; ctx.beginPath(); ctx.ellipse(3850 - offsetX + 20, 400, 20, 50, 0, 0, Math.PI*2); ctx.stroke(); }
-
-    if(!(player.invincibleTimer > 0 && Math.floor(player.invincibleTimer/4)%2===0)) {
-        ctx.fillStyle = config.hair; ctx.fillRect(player.x - offsetX + (player.facingRight?-2:10), player.y - 4, 24, 20);
-        ctx.fillStyle = config.outfit; ctx.fillRect(player.x - offsetX, player.y + 14, player.width, 34);
-        ctx.fillStyle = "#FFDAB9"; ctx.fillRect(player.x - offsetX + 4, player.y, 24, 16);
-        ctx.fillStyle = "#000000"; ctx.fillRect(player.x - offsetX + (player.facingRight?18:8), player.y + 4, 4, 4);
-    }
-    if(player.shieldTimer > 0) { ctx.strokeStyle = "#00BFFF"; ctx.lineWidth = 2; ctx.beginPath(); ctx.arc(player.x - offsetX + 16, player.y + 24, 30, 0, Math.PI*2); ctx.stroke(); }
-
-    ctx.fillStyle = "#000000"; ctx.font = "bold 15px monospace";
-    ctx.fillText(`SCORE: ${score} | VIES: ${lives} | PIÈCES: ${coins} | COMBO: x${comboMultiplier.toFixed(1)} | MONDE: ${config.name}`, 15, 25);
-
-    if(shopOpen) {
-        ctx.fillStyle = "rgba(40,40,45,0.92)"; ctx.fillRect(200, 80, 600, 340); ctx.fillStyle = "#FFFFFF"; ctx.font = "bold 18px monospace"; ctx.fillText("--- BOUTIQUE D'ARMES (Touches 1 à 5) ---", 240, 120);
-        let y = 175; Object.keys(WEAPON_SHOP).forEach((name, i) => {
-            let data = WEAPON_SHOP[name]; let status = currentWeapon === name ? "[ÉQUIPÉE]" : (unlockedWeapons.includes(name) ? "[POSSÉDÉE]" : `Coût: ${data.cost} pièces`);
-            ctx.fillStyle = currentWeapon === name ? "#00FF00" : "#FFFFFF"; ctx.fillText(`${i+1}. Arme ${name} (Piss. ${data.power}) - ${status}`, 250, y); y += 35;
+        
+        // Ajout d'un élément storyMsg (création dynamique)
+        let storyDiv = document.createElement('div');
+        storyDiv.id = 'storyMsg';
+        storyDiv.style.background = '#051f1a';
+        storyDiv.style.borderRadius = '24px';
+        storyDiv.style.padding = '8px';
+        storyDiv.style.marginTop = '10px';
+        storyDiv.style.textAlign = 'center';
+        storyDiv.style.color = '#ffdfaa';
+        storyDiv.style.fontSize = '0.85rem';
+        document.querySelector('.game-container').appendChild(storyDiv);
+        
+        // ---------- CLAVIER ----------
+        let keys = {ArrowLeft:false,ArrowRight:false,KeyA:false,KeyD:false};
+        window.addEventListener('keydown', (e) => {
+            if(keys.hasOwnProperty(e.code)) { keys[e.code]=true; e.preventDefault(); }
         });
-    }
-    if(gameOver) { ctx.fillStyle = "rgba(0,0,0,0.85)"; ctx.fillRect(250, 180, 500, 140); ctx.fillStyle = "#FF0000"; ctx.font = "bold 32px monospace"; ctx.fillText("GAME OVER", 415, 235); ctx.fillStyle = "#FFFFFF"; ctx.font = "16px monospace"; ctx.fillText("Appuyez sur 'R' pour recommencer", 345, 280); }
-    if(victory) { ctx.fillStyle = "rgba(205,133,63,0.95)"; ctx.fillRect(250, 150, 500, 180); ctx.fillStyle = "#FFD700"; ctx.font = "bold 26px monospace"; ctx.fillText("VICTOIRE LÉGENDAIRE !", 335, 195); ctx.fillStyle = "#FFFFFF"; ctx.font = "18px monospace"; ctx.fillText(`Score Final: ${score}`, 420, 235); ctx.fillText("Appuyez sur 'R' pour rejouer", 360, 285); }
-}
-
-setupLevel(currentLevel);
-function loop() { update(); draw(); requestAnimationFrame(loop); }
-loop();
+        window.addEventListener('keyup', (e) => { if(keys.hasOwnProperty(e.code)) keys[e.code]=false; });
+        
+        function movePlayer() {
+            if(!gameRunning || victory) return;
+            let newLane = player.lane;
+            if(keys.ArrowLeft || keys.KeyA) newLane--;
+            if(keys.ArrowRight || keys.KeyD) newLane++;
+            newLane = Math.min(2, Math.max(0, newLane));
+            if(newLane !== player.lane) {
+                player.lane = newLane;
+                player.x = LANE_POS[player.lane] - CAR_W/2;
+            }
+        }
+        
+        // ---------- POWER-UPS : spawn ----------
+        function trySpawnPowerup() {
+            if(Math.random() > 0.012) return; // 1.2% par frame
+            let lane = Math.floor(Math.random() * LANE_COUNT);
+            let xPos = LANE_POS[lane] - POWER_SIZE/2;
+            let types = ['boost', 'slow', 'shield'];
+            let randType = types[Math.floor(Math.random()*3)];
+            powerups.push({
+                x: xPos, y: -POWER_SIZE, w: POWER_SIZE, h: POWER_SIZE,
+                type: randType, lane: lane
+            });
+        }
+        
+        // Gestion collection power-up
+        function applyPowerup(type) {
+            let now = Date.now();
+            if(type === 'boost') {
+                activeBoost = true; boostEnd = now + 3000;
+                activeSlow = false; activeShield = false;
+            } else if(type === 'slow') {
+                activeSlow = true; slowEnd = now + 3500;
+                activeBoost = false; activeShield = false;
+            } else if(type === 'shield') {
+                activeShield = true; shieldEnd = now + 4000;
+                activeBoost = false; activeSlow = false;
+                player.invincible = true;
+                setTimeout(()=> { if(!activeShield) player.invincible = false; }, 4000);
+            }
+            updateUI();
+            setTimeout(() => {
+                if(activeBoost && Date.now() >= boostEnd) { activeBoost = false; updateUI(); }
+                if(activeSlow && Date.now() >= slowEnd) { activeSlow = false; updateUI(); }
+                if(activeShield && Date.now() >= shieldEnd) { activeShield = false; player.invincible = false; updateUI(); }
+            }, 4000);
+        }
+        
+        // ---------- SPAWN ENNEMIS ----------
+        function spawnEnemy() {
+            let lane = Math.floor(Math.random() * LANE_COUNT);
+            let isVictor = (currentLevel === 10 && Math.random() < 0.2);
+            enemies.push({
+                x: LANE_POS[lane] - ENEMY_W/2, y: -ENEMY_H,
+                w: ENEMY_W, h: ENEMY_H, lane: lane,
+                isVictor: isVictor, counted: false
+            });
+        }
+        
+        // ---------- MISE À JOUR LOGIQUE ----------
+        function updateGame() {
+            if(!gameRunning || victory) return;
+            
+            // vitesse ennemis
+            let speedMulti = (currentLevel-1) * 0.45;
+            let enemySpeed = baseEnemySpeed + speedMulti;
+            if(activeSlow) enemySpeed *= 0.55;
+            
+            for(let e of enemies) e.y += enemySpeed;
+            enemies = enemies.filter(e => e.y < canvas.height);
+            
+            // spawn ennemis
+            let spawnSpd = Math.max(20, spawnDelayFrames - Math.floor(currentScore/25) - Math.floor(currentLevel/2));
+            frameCounter++;
+            if(frameCounter >= spawnSpd) {
+                frameCounter = 0;
+                spawnEnemy();
+            }
+            
+            // spawn power-ups
+            trySpawnPowerup();
+            for(let p of powerups) p.y += 4.8;
+            powerups = powerups.filter(p => p.y < canvas.height);
+            
+            // COLLECT power-ups
+            for(let i=0; i<powerups.length; i++) {
+                let p = powerups[i];
+                if(player.x < p.x+p.w && player.x+player.w > p.x &&
+                   player.y < p.y+p.h && player.y+player.h > p.y) {
+                    applyPowerup(p.type);
+                    powerups.splice(i,1);
+                    break;
+                }
+            }
+            
+            // collision avec ennemis (sauf si invincible)
+            for(let i=0; i<enemies.length; i++) {
+                let e = enemies[i];
+                if(player.x < e.x+e.w && player.x+player.w > e.x &&
+                   player.y < e.y+e.h && player.y+player.h > e.y) {
+                    if(!player.invincible && !activeShield) {
+                        gameRunning = false;
+                        updateUI();
+                        return;
+                    } else {
+                        // si bouclier actif, détruit l'ennemi touché
+                        enemies.splice(i,1);
+                        i--;
+                    }
+                }
+            }
+            
+            // Ajout score pour ennemis sortis
+            for(let i=0; i<enemies.length; i++) {
+                if(!enemies[i].counted && enemies[i].y + enemies[i].h >= canvas.height) {
+                    enemies[i].counted = true;
+                    currentScore++;
+                    updateUI();
+                    // vérifier passage niveau
+                    if(currentScore >= levelObjectives[currentLevel] && currentLevel < 10) {
+                        currentLevel++;
+                        currentScore = 0;
+                        enemies = [];
+                        powerups = [];
+                        frameCounter = 0;
+                        gameRunning = true;
+                        // bonus: désactive effets spéciaux
+                        activeBoost=false; activeSlow=false; activeShield=false; player.invincible=false;
+                        updateUI();
+                        let msg = dialogues[currentLevel];
+                        document.getElementById('storyMsg').innerText = msg;
+                        setTimeout(()=>updateUI(),100);
+                    } else if(currentLevel === 10 && currentScore >= levelObjectives[10]) {
+                        victory = true;
+                        gameRunning = false;
+                        updateUI();
+                    }
+                }
+            }
+            // gestion boost : effet sur vitesse joueur (visuel seulement, mouvement identique)
+            if(activeBoost) {
+                // on pourrait accélérer les frames de déplacement mais garder réactif
+            }
+        }
+        
+        // ---------- DESSIN SPECTACULAIRE (sprites & effets) ----------
+        function drawRoad() {
+            const grad = ctx.createLinearGradient(0,0,0,canvas.height);
+            grad.addColorStop(0,'#1f3a30');
+            grad.addColorStop(1,'#0b231d');
+            ctx.fillStyle=grad;
+            ctx.fillRect(0,0,canvas.width,canvas.height);
+            ctx.strokeStyle = '#ffecb3';
+            ctx.lineWidth=4;
+            ctx.setLineDash([25,40]);
+            for(let i=1;i<LANE_COUNT;i++){
+                ctx.beginPath();
+                ctx.moveTo(i*LANE_WIDTH,0);
+                ctx.lineTo(i*LANE_WIDTH,canvas.height);
+                ctx.stroke();
+            }
+            ctx.setLineDash([]);
+            ctx.strokeStyle='#ebb45e';
+            ctx.lineWidth=5;
+            ctx.strokeRect(12,12,canvas.width-24,canvas.height-24);
+            // marquage central
+            for(let i=0;i<20;i++){
+                ctx.fillStyle='#fae472';
+                ctx.fillRect(canvas.width/2-6, (i*45 + Date.now()*0.2)%canvas.height, 12, 22);
+            }
+        }
+        
+        function drawPlayerCar() {
+            // effet boost : lueur orange
+            if(activeBoost) ctx.shadowBlur=15, ctx.shadowColor='#ffaa44';
+            ctx.fillStyle='#3cc9ff';
+            ctx.beginPath();
+            ctx.roundRect(player.x, player.y, CAR_W, CAR_H, 12);
+            ctx.fill();
+            ctx.fillStyle='#162b38';
+            ctx.beginPath();
+            ctx.roundRect(player.x+7, player.y+14, CAR_W-14, 30, 8);
+            ctx.fill();
+            ctx.fillStyle='#ffcf7a';
+            ctx.fillRect(player.x+5, player.y+66, 10,8);
+            ctx.fillRect(player.x+CAR_W-15, player.y+66,10,8);
+            ctx.shadowBlur=0;
+            if(activeShield){
+                ctx.beginPath();
+                ctx.arc(player.x+CAR_W/2, player.y+CAR_H/2, CAR_W/1.8, 0, Math.PI*2);
+                ctx.strokeStyle='#6ef0ff';
+                ctx.lineWidth=3;
+                ctx.stroke();
+            }
+        }
+        
+        function drawEnemyCar(e){
+            if(e.isVictor){
+                ctx.fillStyle='#181818';
+                ctx.shadowBlur=6;
+                ctx.shadowColor='#ff4422';
+            } else {
+                let grad = ctx.createLinearGradient(e.x, e.y, e.x+10, e.y+ENEMY_H);
+                grad.addColorStop(0,'#da4a2e');
+                grad.addColorStop(1,'#a1230c');
+                ctx.fillStyle=grad;
+            }
+            ctx.beginPath();
+            ctx.roundRect(e.x, e.y, ENEMY_W, ENEMY_H, 10);
+            ctx.fill();
+            ctx.fillStyle='#3d251c';
+            ctx.beginPath();
+            ctx.roundRect(e.x+7, e.y+12, ENEMY_W-14, 28, 6);
+            ctx.fill();
+            if(e.isVictor){
+                ctx.fillStyle='#ffaa55';
+                ctx.font='bold 18px monospace';
+                ctx.fillText("V", e.x+18, e.y+48);
+            }
+            ctx.shadowBlur=0;
+        }
+        
+        function drawPowerup(p){
+            ctx.shadowBlur=8;
+            ctx.shadowColor='#ffdd77';
+            ctx.fillStyle = p.type==='boost' ? '#7aff87' : (p.type==='slow' ? '#ffd966' : '#6ac8ff');
+            ctx.beginPath();
+            ctx.arc(p.x+POWER_SIZE/2, p.y+POWER_SIZE/2, POWER_SIZE/2, 0, Math.PI*2);
+            ctx.fill();
+            ctx.fillStyle='#000000aa';
+            ctx.font = 'bold 20px monospace';
+            let symbol = p.type==='boost' ? '⚡' : (p.type==='slow' ? '🐢' : '🛡️');
+            ctx.fillText(symbol, p.x+6, p.y+22);
+            ctx.shadowBlur=0;
+        }
+        
+        function drawGameMessages(){
+            if(!gameRunning && !victory){
+                ctx.font='bold 34px monospace';
+                ctx.fillStyle='#ffbb77';
+                ctx.shadowBlur=0;
+                ctx.fillText('GAME OVER', canvas.width/2-120, canvas.height/2-50);
+            } else if(victory){
+                ctx.font='28px monospace';
+                ctx.fillStyle='#fde16d';
+                ctx.fillText('LÉGENDE DE LA ROUTE', canvas.width/2-150, canvas.height/2-30);
+                ctx.font='18px monospace';
+                ctx.fillStyle='#c3f0d2';
+                ctx.fillText('Garage sauvé - Crédits finaux', canvas.width/2-120, canvas.height/2+40);
+            }
+        }
+        
+        function render() {
+            drawRoad();
+            for(let e of enemies) drawEnemyCar(e);
+            for(let p of powerups) drawPowerup(p);
+            drawPlayerCar();
+            drawGameMessages();
+            ctx.font='bold 14px monospace';
+            ctx.fillStyle='#ffefb0';
+            ctx.fillText('BOOST:'+(activeBoost?'ON':'OFF')+' | SLOW:'+(activeSlow?'ON':'OFF'), 15, 45);
+        }
+        
+        // ---------- RESET COMPLET ----------
+        function fullReset() {
+            gameRunning = true;
+            victory = false;
+            currentLevel = 1;
+            currentScore = 0;
+            enemies = [];
+            powerups = [];
+            frameCounter = 0;
+            activeBoost = false; activeSlow = false; activeShield = false; player.invincible = false;
+            player.lane = 1;
+            player.x = LANE_POS[1] - CAR_W/2;
+            updateUI();
+            document.getElementById('storyMsg').innerText = dialogues[1];
+        }
+        
+        // Animation
+        function gameLoop() {
+            movePlayer();
+            updateGame();
+            render();
+            requestAnimationFrame(gameLoop);
+        }
+        
+        document.getElementById('resetStoryBtn').addEventListener('click', () => fullReset());
+        fullReset();
+        gameLoop();
+    })();
 </script>
 </body>
 </html>
 """
 
-components.html(game_html_code, height=530, scrolling=False)
+st.set_page_config(page_title="Racer's Legacy Turbo - 10 niveaux & power-ups", page_icon="🏎️💨", layout="centered")
+st.markdown("<h1 style='text-align:center; color:#ffbc6e;'>🏁 RACER'S LEGACY – TURBO EDITION 🏁</h1>", unsafe_allow_html=True)
+st.components.v1.html(GAME_WITH_POWERUPS, height=820, scrolling=False)
+st.markdown("🎮 **Nouveautés :** 10 niveaux, 3 power-ups (⚡Boost, 🐢Slow, 🛡️Bouclier), graphismes améliorés avec effets de lumière. Utilise les flèches ou A/D.")
